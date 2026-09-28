@@ -534,25 +534,20 @@ void Twim::end() {
 
 bool Twim::write(uint8_t address7, const uint8_t* data, size_t len,
                  uint32_t spinLimit) {
-  if (len > 0xFFFFU) {
+  if (data == nullptr || len == 0U || len > 0xFFFFU) {
     return false;
   }
-
-  uint8_t dummy = 0;
-  const uint8_t* tx = (data != nullptr) ? data : &dummy;
 
   clearTwimState(base_);
   reg32(base_ + twim::ADDRESS) = (address7 & 0x7FU);
 
   reg32(base_ + twim::DMA_TX_PTR) =
-      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(tx));
+      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(data));
   reg32(base_ + twim::DMA_TX_MAXCNT) = static_cast<uint32_t>(len);
 
   reg32(base_ + twim::TASKS_DMA_TX_START) = 1;
-  const uint32_t doneEvent = (len > 0U) ? twim::EVENTS_LASTTX
-                                        : twim::EVENTS_DMA_TX_END;
-  const bool writeOk = waitForEventOrError(base_, doneEvent, twim::EVENTS_ERROR,
-                                           spinLimit);
+  const bool writeOk = waitForEventOrError(base_, twim::EVENTS_LASTTX,
+                                           twim::EVENTS_ERROR, spinLimit);
 
   reg32(base_ + twim::TASKS_STOP) = 1;
   const bool stopOk = waitForEvent(base_, twim::EVENTS_STOPPED, spinLimit);

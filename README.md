@@ -318,7 +318,7 @@ Install the stable release from the normal Boards Manager feed shown above, or
 request the exact version with Arduino CLI:
 
 ```bash
-arduino-cli core install "nrf54l15clean:nrf54l15clean@1.0.19"
+arduino-cli core install "nrf54l15clean:nrf54l15clean@1.0.20"
 ```
 
 - Controller-backed Bluetooth LE Channel Sounding Test is now available through
@@ -590,7 +590,7 @@ See [Channel Sounding current status](docs/CHANNEL_SOUNDING_CURRENT_STATUS.md).
 | ADC / SAADC | **Implemented** | `analogRead`, resolution control, internal-supply helpers, gain and oversampling APIs. | Board-specific calibration affects absolute accuracy. |
 | PWM | **Implemented** | `analogWrite`, global/per-pin frequency paths and hardware/timer/software allocation. | Frequencies and channels share finite PWM/timer resources. |
 | UART/UARTE | **Implemented** | `Serial`, `Serial1`, compatible extra routes and lower-level UARTE APIs. | The XIAO USB serial path is an external bridge, not native USB CDC. |
-| I2C controller (`Wire`) | **Implemented** | `Wire`, `Wire1`, repeated starts and lower-level TWIM access. | Pin mux and serial-fabric ownership are board-specific. |
+| I2C controller (`Wire`) | **Implemented** | `Wire`, `Wire1`, repeated starts and lower-level TWIM access. | Pin mux and serial-fabric ownership are board-specific. Empty writes require STOP; see [address-probe behavior](docs/ISSUE_115_WIRE_ADDRESS_PROBES.md). |
 | I2C target (TWIS) | **Partial** | Target callbacks and TWIS21/TWIS30 examples. | Multi-instance and stress validation are narrower than controller mode. |
 | SPI controller | **Implemented** | Arduino `SPI`, lower-level SPIM and selected multi-instance examples. | Maximum usable speed depends on instance, pins and board routing. |
 | SPI target (SPIS) | **Partial** | SPIS wrapper and target echo example. | Broad multi-instance/high-speed validation is incomplete. |

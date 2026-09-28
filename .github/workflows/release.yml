@@ -99,6 +99,9 @@ jobs:
           python3 ./scripts/test_ble_lazy_security_init.py
           python3 ./scripts/test_ble_idle_power.py
           python3 ./scripts/test_npm1300_adc_power.py
+          python3 ./scripts/test_wire_address_probe_contracts.py
+          python3 ./scripts/test_wire_controller_state.py
+          python3 ./scripts/test_twim_write_validation.py
           python3 ./scripts/test_ble_multibond_contracts.py
           python3 ./scripts/test_ble_periodic_advertising_contracts.py
           python3 ./scripts/test_upload_helper.py

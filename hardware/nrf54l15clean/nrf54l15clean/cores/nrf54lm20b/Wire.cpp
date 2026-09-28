@@ -65,7 +65,6 @@ static constexpr uint32_t T_TWIM_ERRORSRC_ALL  = 0x7UL;
 static constexpr uint32_t T_TWIM_ERRORSRC_ANACK = (1UL << 1U);
 static constexpr uint32_t T_TWIM_ERRORSRC_DNACK = (1UL << 2U);
 static constexpr uint32_t T_TWIM_SHORT_LASTTX_STOP = (1UL << 9U);
-static constexpr uint32_t T_TWIM_SHORT_LASTRX_STOP = (1UL << 12U);
 
 static constexpr uint32_t T_TWIS_ERRORSRC_OVERFLOW = (1UL << 0U);
 static constexpr uint32_t T_TWIS_ERRORSRC_DNACK    = (1UL << 2U);
@@ -167,6 +166,125 @@ static void configure_i2c_pin(uint8_t port, uint8_t pin) {
     cnf |= (GPIO_PIN_CNF_DRIVE0_S0 << GPIO_PIN_CNF_DRIVE0_Pos);
     cnf |= (GPIO_PIN_CNF_DRIVE1_D1 << GPIO_PIN_CNF_DRIVE1_Pos);
     gpio->PIN_CNF[pin] = cnf;
+}
+
+// TWIM DMA.TX.MAXCNT excludes zero. Use GPIO only for an address-only WRITE,
+// never a dummy payload or a READ (command-first sensors may NACK a READ).
+static bool twim_probe_wait_high(NRF_GPIO_Type* gpio, uint32_t mask) {
+    const uint32_t started = micros();
+    while ((gpio->IN & mask) != mask) {
+        if (static_cast<uint32_t>(micros() - started) >= 25000UL) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint8_t twim_probe_write_address(uintptr_t base, uint8_t sda,
+                                       uint8_t scl, uint8_t address) {
+    uint8_t sclPort = 0U, sclPin = 0U, sdaPort = 0U, sdaPin = 0U;
+    if (!decode_pin(scl, &sclPort, &sclPin) ||
+        !decode_pin(sda, &sdaPort, &sdaPin) ||
+        sclPort != sdaPort || sclPin == sdaPin) {
+        return 4U;
+    }
+    NRF_GPIO_Type* gpio = gpio_for_port(sclPort);
+    if (gpio == nullptr) {
+        return 4U;
+    }
+
+    const uint32_t sclMask = 1UL << sclPin;
+    const uint32_t sdaMask = 1UL << sdaPin;
+    const uint32_t pins = sclMask | sdaMask;
+    const uint32_t savedSclCnf = gpio->PIN_CNF[sclPin];
+    const uint32_t savedSdaCnf = gpio->PIN_CNF[sdaPin];
+    const uint32_t savedOut = gpio->OUT & pins;
+    const uint32_t savedEnable = reg32(base + T_ENABLE);
+    // Allow one us of micros() quantization while meeting Standard-mode timing.
+    const unsigned int phaseUs = 6U;
+
+    // Preload released, open-drain outputs before handing pins away from TWIM.
+    // Interrupts stay enabled; longer clock phases do not change I2C bits.
+    configure_i2c_pin(sclPort, sclPin);
+    configure_i2c_pin(sdaPort, sdaPin);
+    gpio->OUTSET = pins;
+    gpio->DIRSET = pins;
+    reg32(base + T_ENABLE) = T_ENABLE_DISABLED;
+    __DSB();
+
+    uint8_t status = 4U;
+    bool started = false;
+    do {
+        if (!twim_probe_wait_high(gpio, sclMask) ||
+            (gpio->IN & sdaMask) == 0U) {
+            break;  // Busy/stuck bus is not an address ACK.
+        }
+        // At most 100 kHz for this nine-clock probe, regardless of the payload
+        // clock setting. Include setup/hold/bus-free time before START.
+        delayMicroseconds(phaseUs);
+        gpio->OUTCLR = sdaMask;  // START
+        started = true;
+        delayMicroseconds(phaseUs);
+        gpio->OUTCLR = sclMask;
+
+        const uint8_t addressByte = static_cast<uint8_t>(address << 1U);
+        bool clocksOk = true;
+        for (uint8_t bit = 0x80U; bit != 0U; bit >>= 1U) {
+            if ((addressByte & bit) != 0U) {
+                gpio->OUTSET = sdaMask;
+            } else {
+                gpio->OUTCLR = sdaMask;
+            }
+            delayMicroseconds(phaseUs);
+            gpio->OUTSET = sclMask;
+            if (!twim_probe_wait_high(gpio, sclMask)) {
+                clocksOk = false;
+                break;
+            }
+            delayMicroseconds(phaseUs);
+            gpio->OUTCLR = sclMask;
+        }
+        if (!clocksOk) {
+            break;
+        }
+        gpio->OUTSET = sdaMask;  // Release SDA for the target's ACK.
+        delayMicroseconds(phaseUs);
+        gpio->OUTSET = sclMask;
+        if (!twim_probe_wait_high(gpio, sclMask)) {
+            break;
+        }
+        delayMicroseconds(phaseUs);
+        status = ((gpio->IN & sdaMask) == 0U) ? 0U : 2U;
+        gpio->OUTCLR = sclMask;
+    } while (false);
+
+    if (started) {
+        // Complete STOP even after NACK. A failed clock/STOP cannot be success.
+        gpio->OUTCLR = sclMask;
+        gpio->OUTCLR = sdaMask;
+        delayMicroseconds(phaseUs);
+        gpio->OUTSET = sclMask;
+        if (!twim_probe_wait_high(gpio, sclMask)) {
+            status = 4U;
+        }
+        delayMicroseconds(phaseUs);
+        gpio->OUTSET = sdaMask;  // STOP
+        delayMicroseconds(phaseUs);
+        if ((gpio->IN & pins) != pins) {
+            status = 4U;
+        }
+    }
+
+    gpio->OUTSET = pins;
+    gpio->DIRCLR = pins;
+    // TWIM resumes owning released pins before restoring the GPIO output latch.
+    reg32(base + T_ENABLE) = savedEnable;
+    __DSB();
+    gpio->OUTSET = savedOut;
+    gpio->OUTCLR = pins & ~savedOut;
+    gpio->PIN_CNF[sclPin] = savedSclCnf;
+    gpio->PIN_CNF[sdaPin] = savedSdaCnf;
+    return status;
 }
 
 static uint32_t twim_frequency_reg(uint32_t hz) {
@@ -543,12 +661,9 @@ uint8_t TwoWire::endTransmission(bool sendStop) {
     const uintptr_t base = reinterpret_cast<uintptr_t>(_twim);
 
     if (_txBufferLength == 0U) {
-        // nRF54L TWIM DMA.TX.MAXCNT is defined only for 1..0xFFFF. Starting a
-        // zero-byte TX can complete EasyDMA locally without placing an address
-        // on the bus, which makes every address look present to I2C scanners.
-        // A one-byte read emits a real address phase without writing to the
-        // target. LASTRX is raised after the address ACK when MAXCNT is one.
-        if (!sendStop) {
+        // Empty probes require STOP and an idle controller. Do not silently
+        // split a caller's repeated-start sequence during the GPIO handoff.
+        if (!sendStop || _pendingRepeatedStart) {
             bool stopped = true;
             if (_pendingRepeatedStart) {
                 reg32(base + T_EVENTS_STOPPED) = 0U;
@@ -560,42 +675,9 @@ uint8_t TwoWire::endTransmission(bool sendStop) {
             return 4U;
         }
 
-        // The instance TX buffer stays valid if a broken bus prevents STOPPED,
-        // and keeps concurrent Wire/Wire1 probes on distinct DMA storage.
-        reg32(base + T_EVENTS_STOPPED) = 0U;
-        reg32(base + T_EVENTS_ERROR) = 0U;
-        reg32(base + T_EVENTS_LASTRX) = 0U;
-        reg32(base + T_EVENTS_DMA_RX_END) = 0U;
-        reg32(base + T_TWIM_ERRORSRC) = T_TWIM_ERRORSRC_ALL;
-        reg32(base + T_ADDRESS) = _txAddress;
-        reg32(base + T_DMA_RX_PTR) =
-            static_cast<uint32_t>(reinterpret_cast<uintptr_t>(_txBuffer));
-        reg32(base + T_DMA_RX_MAXCNT) = 1U;
-        reg32(base + T_SHORTS) = T_TWIM_SHORT_LASTRX_STOP;
-        reg32(base + T_TASKS_DMA_RX_START) = 1U;
-
-        const bool addressAcked =
-            wait_event_or_error(base, T_EVENTS_LASTRX, 300000UL);
-        if (!addressAcked) {
-            reg32(base + T_TASKS_STOP) = 1U;
-        }
-        const bool stopOk = wait_event(base, T_EVENTS_STOPPED, 300000UL);
-        reg32(base + T_SHORTS) = 0U;
-        const uint32_t errorsrc =
-            reg32(base + T_TWIM_ERRORSRC) & T_TWIM_ERRORSRC_ALL;
-        const bool errorEvent = reg32(base + T_EVENTS_ERROR) != 0U;
-
-        // STOPPED proves EasyDMA no longer references the probe byte.
-        if (stopOk) {
-            reg32(base + T_DMA_RX_PTR) = 0U;
-            reg32(base + T_DMA_RX_MAXCNT) = 0U;
-            __DSB();
-        }
-        reg32(base + T_TWIM_ERRORSRC) = T_TWIM_ERRORSRC_ALL;
-        _pendingRepeatedStart = false;
-        _txBufferLength = 0U;
+        const uint8_t status = twim_probe_write_address(base, _sda, _scl, _txAddress);
         _lastActivityUs = micros();
-        return end_tx_error_code(addressAcked && !errorEvent, stopOk, errorsrc);
+        return status;
     }
 
     reg32(base + T_EVENTS_STOPPED) = 0U;
@@ -628,7 +710,7 @@ uint8_t TwoWire::endTransmission(bool sendStop) {
         errorsrc |= reg32(base + T_TWIM_ERRORSRC) & T_TWIM_ERRORSRC_ALL;
         errorEvent = errorEvent || (reg32(base + T_EVENTS_ERROR) != 0U);
         reg32(base + T_SHORTS) = 0U;
-        _pendingRepeatedStart = false;
+        _pendingRepeatedStart = !stopOk;
     } else {
         _pendingRepeatedStart = true;
     }
@@ -677,7 +759,7 @@ uint8_t TwoWire::requestFrom(uint8_t address, size_t quantity, bool sendStop) {
     if (sendStop || !readOk || hadError) {
         reg32(base + T_TASKS_STOP) = 1U;
         stopOk = wait_event(base, T_EVENTS_STOPPED, 300000UL);
-        _pendingRepeatedStart = false;
+        _pendingRepeatedStart = !stopOk;
     } else {
         _pendingRepeatedStart = true;
     }
@@ -685,7 +767,6 @@ uint8_t TwoWire::requestFrom(uint8_t address, size_t quantity, bool sendStop) {
     reg32(base + T_TWIM_ERRORSRC) = T_TWIM_ERRORSRC_ALL;
 
     if (!readOk || !stopOk || hadError) {
-        _pendingRepeatedStart = false;
         clearReceiveState();
         _lastActivityUs = micros();
         return 0;

@@ -179,6 +179,7 @@ class Twim {
   bool setFrequency(TwimFrequency frequency);
   void end();
 
+  // DMA writes require a valid 1..65535-byte buffer. Use Wire for address probes.
   bool write(uint8_t address7, const uint8_t* data, size_t len,
              uint32_t spinLimit = 2000000UL);
   bool read(uint8_t address7, uint8_t* data, size_t len,
