@@ -35,7 +35,8 @@ FRAMEWORK_SRC_DIR = f"{FRAMEWORK_DIR}/hardware/nrf54l15clean/nrf54l15clean"
 
 CORE_DIR = f"{FRAMEWORK_SRC_DIR}/cores/{CORE}"
 VARIANT_DIR = f"{FRAMEWORK_SRC_DIR}/variants/{VARIANT}"
-NORDIC_SDC_DIR = f"{FRAMEWORK_SRC_DIR}/libraries/Nrf54L15-Clean-Implementation/third_party/nordic_sdc/lib/nrf54l"
+NORDIC_SDC_ARCH = board.get("build.nordic_sdc_arch")  # "nrf54l" for L15, "nrf54lm" for LM20 -- confirmed per-board, was previously hardcoded to L15's value, a real latent bug for any other board
+NORDIC_SDC_DIR = f"{FRAMEWORK_SRC_DIR}/libraries/Nrf54L15-Clean-Implementation/third_party/nordic_sdc/lib/{NORDIC_SDC_ARCH}"
 # Forced includes (compiler.c.extra_flags / compiler.cpp.extra_flags /
 # compiler.S.extra_flags in platform.txt).
 
