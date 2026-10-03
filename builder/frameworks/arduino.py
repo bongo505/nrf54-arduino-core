@@ -26,10 +26,16 @@ BOARD_DEFINE = board.get("build.board_define")  # "XIAO_NRF54L15_CLEAN"
 ARCH_DEFINE = board.get("build.arch_define")    # "NRF54L15CLEAN"
 EXTRA_FLAGS = board.get("build.extra_flags")    # list, see board json
 
-CORE_DIR = f"{FRAMEWORK_DIR}/cores/{CORE}"
-VARIANT_DIR = f"{FRAMEWORK_DIR}/variants/{VARIANT}"
-NORDIC_SDC_DIR = f"{FRAMEWORK_DIR}/libraries/Nrf54L15-Clean-Implementation/third_party/nordic_sdc/lib/nrf54l"
+# The git repo uses Arduino's standard "manual install" layout
+# (hardware/<vendor>/<architecture>/) rather than the flattened layout
+# Boards Manager release tarballs use -- confirmed via a real failed build
+# and a real directory listing, not assumed. Everything below this offset
+# is otherwise identical in structure to the tarball layout.
+FRAMEWORK_SRC_DIR = f"{FRAMEWORK_DIR}/hardware/nrf54l15clean/nrf54l15clean"
 
+CORE_DIR = f"{FRAMEWORK_SRC_DIR}/cores/{CORE}"
+VARIANT_DIR = f"{FRAMEWORK_SRC_DIR}/variants/{VARIANT}"
+NORDIC_SDC_DIR = f"{FRAMEWORK_SRC_DIR}/libraries/Nrf54L15-Clean-Implementation/third_party/nordic_sdc/lib/nrf54l"
 # Forced includes (compiler.c.extra_flags / compiler.cpp.extra_flags /
 # compiler.S.extra_flags in platform.txt).
 
