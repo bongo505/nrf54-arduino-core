@@ -32,6 +32,56 @@ NORDIC_SDC_DIR = f"{FRAMEWORK_DIR}/libraries/Nrf54L15-Clean-Implementation/third
 
 # Forced includes (compiler.c.extra_flags / compiler.cpp.extra_flags /
 # compiler.S.extra_flags in platform.txt).
+
+# --- Patch: generate CoreVersionGenerated.h ---
+#
+# This header isn't checked into the repo -- confirmed by a real failed
+# build against a plain git clone (cc1plus: fatal error: ... No such file
+# or directory), even though it's present in lolren's official release
+# tarballs. Its actual content (confirmed from a real extracted release)
+# is pure version-number macros with nothing build-specific (no git hash,
+# no timestamp) -- so it's safe to regenerate here rather than depend on
+# whatever private process creates it for his tarball releases.
+#
+# FRAMEWORK_PACKAGE_VERSION below must be kept in sync with package.json's
+# "version" field at the repo root -- same manual-bump cadence lolren
+# already has for platform.txt/boards.txt's "version=" line, just one more
+# place to update at release time. Not ideal long-term (three places now:
+# package.json, this constant, and whatever he bumps for the Arduino IDE
+# side) but correct and simple for now.
+
+import os
+
+FRAMEWORK_PACKAGE_VERSION = (1, 0, 17)  # (major, minor, patch) -- keep in sync with package.json
+
+_version_header_path = os.path.join(CORE_DIR, "CoreVersionGenerated.h")
+if not os.path.isfile(_version_header_path):
+    major, minor, patch = FRAMEWORK_PACKAGE_VERSION
+    version_string = f"{major}.{minor}.{patch}"
+    with open(_version_header_path, "w") as f:
+        f.write(f"""#ifndef NRF54L15_CLEAN_CORE_VERSION_GENERATED_H
+#define NRF54L15_CLEAN_CORE_VERSION_GENERATED_H
+
+#define ARDUINO_NRF54L15_CLEAN_VERSION_MAJOR {major}
+#define ARDUINO_NRF54L15_CLEAN_VERSION_MINOR {minor}
+#define ARDUINO_NRF54L15_CLEAN_VERSION_PATCH {patch}
+#define ARDUINO_NRF54L15_CLEAN_VERSION_PRERELEASE ""
+#define ARDUINO_NRF54L15_CLEAN_VERSION_IS_PRERELEASE 0
+
+#define ARDUINO_NRF54L15_CLEAN_VERSION_ENCODE(major, minor, patch) \\
+    (((major) * 10000UL) + ((minor) * 100UL) + (patch))
+
+#define ARDUINO_NRF54L15_CLEAN_VERSION \\
+    ARDUINO_NRF54L15_CLEAN_VERSION_ENCODE( \\
+        ARDUINO_NRF54L15_CLEAN_VERSION_MAJOR, \\
+        ARDUINO_NRF54L15_CLEAN_VERSION_MINOR, \\
+        ARDUINO_NRF54L15_CLEAN_VERSION_PATCH)
+
+#define ARDUINO_NRF54L15_CLEAN_VERSION_STRING "{version_string}"
+
+#endif  // NRF54L15_CLEAN_CORE_VERSION_GENERATED_H
+""")
+
 env.Append(CCFLAGS=[
     "-include", f"{CORE_DIR}/CoreVersionGenerated.h",
     "-include", f"{CORE_DIR}/BuildTargetGuard.h",
