@@ -1,0 +1,40 @@
+{
+  "name": "nrf54l15clean",
+  "title": "nRF54 Arduino Core",
+  "description": "Arduino for Nordic nRF54L15 and nRF54LM20A, including XIAO Sense, HOLYIOT and Nordic DK boards.",
+  "homepage": "https://github.com/lolren/nrf54-arduino-core",
+  "license": "MIT",
+  "keywords": [
+    "nrf54",
+    "nrf54l15",
+    "nrf54lm20a",
+    "arduino",
+    "bluetooth"
+  ],
+  "version": "1.0.20",
+  "engines": {
+    "platformio": "^6.1.18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lolren/nrf54-arduino-core.git"
+  },
+  "frameworks": {
+    "arduino": {
+      "script": "builder/frameworks/arduino.py"
+    }
+  },
+  "packages": {
+    "toolchain-gccarmnoneeabi": {
+      "type": "toolchain",
+      "owner": "platformio",
+      "version": "~1.70201.0"
+    },
+    "tool-nrf54-gdb": {
+      "type": "debugger",
+      "optional": true,
+      "owner": "platformio",
+      "version": "1.90301.200702"
+    }
+  }
+}
