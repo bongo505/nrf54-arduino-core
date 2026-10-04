@@ -7,6 +7,7 @@
     "variant": "xiao_nrf54l15",
     "board_define": "XIAO_NRF54L15_CLEAN",
     "arch_define": "NRF54L15CLEAN",
+    "nordic_sdc_arch": "nrf54l",
     "ldscript": "nrf54l15_linker_script.ld",
     "extra_flags": [
       "-DARDUINO_NRF54L15",
