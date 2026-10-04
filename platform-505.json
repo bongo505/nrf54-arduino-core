@@ -10,8 +10,8 @@
   "_NOTES": {
     "flags_source": "Compile/link recipe values in builder/ are transcribed directly from this repo's own platform.txt/boards.txt (v1.0.17), not guessed.",
     "bypassed": "This repo's own upload.py / nrf_ocd / tools.nrf54upload chain is intentionally not used here. Upload goes through pyOCD directly (target 'nrf54l', CMSIS-DAP), confirmed working against real XIAO nRF54L15 hardware.",
-    "lm20a_status": "Not yet supported in this PlatformIO platform -- only the XIAO nRF54L15 has a board manifest so far.",
-    "generated_version_header": "builder/frameworks/arduino.py generates cores/<core>/CoreVersionGenerated.h at build time if it's missing -- confirmed this file is NOT checked into git (only present in release tarballs), so a plain git clone of this repo needs it generated. The generated content's version number is hardcoded in arduino.py and needs to be kept in sync with this package's own version manually -- same bump cadence as platform.txt/boards.txt's version= line already requires."
+    "toolchain_note": "The Arduino IDE package pins arm-none-eabi-gcc 7-2017q4. platform.txt's actual flags (gnu11/gnu++17, no explicit -mfpu, soft float) don't depend on GCC-7-specific behavior, so PlatformIO's own newer toolchain-gccarmnoneeabi package has tested fine -- but this hasn't been exercised against every example/library in the repo, just a minimal sketch.",
+    "lm20a_status": "Not yet supported in this PlatformIO platform -- only the XIAO nRF54L15 has a board manifest so far. The core itself supports the LM20A; this PlatformIO port just hasn't been extended to it yet."
   },
 
   "frameworks": {
@@ -30,8 +30,8 @@
     "framework-nrf54l15clean": {
       "type": "framework",
       "optional": false,
-      "version": "https://github.com/lolren/nrf54-arduino-core.git#main",
-      "_NOTE": "OPEN QUESTION for lolren, not a final decision made on his behalf: this currently tracks main unpinned, which works immediately once this PR merges but means every future commit to main changes what this package installs with no version pinning. The alternative is pinning to a specific tag (e.g. v1.0.21) once one exists that includes these PlatformIO files -- but no such tag exists yet. Whichever he prefers, this value should be revisited at/after merge rather than left as 'main' indefinitely."
+      "version": "https://github.com/bongo505/nrf54-arduino-core.git#platformio",
+      "_NOTE": "TEMPORARY, for pre-merge testing only: points at the fork+branch where package.json/platform.json/boards/builder are being added, since lolren's actual tags don't have them yet. Once this PR is merged into lolren/nrf54-arduino-core and a new release/tag is cut including these files, change this back to point at lolren's repo directly (e.g. https://github.com/lolren/nrf54-arduino-core.git#v1.0.21 or whatever the merged tag ends up being) -- don't ship the PR itself with this fork URL still in place."
     },
     "tool-pyocd": {
       "type": "uploader",
