@@ -1,6 +1,6 @@
-# Board Manager Release Script
+# Arduino and PlatformIO Release Script
 
-This repo builds Arduino Board Manager updates with one canonical implementation:
+This repo builds Arduino Board Manager and PlatformIO updates with one canonical implementation:
 `scripts/build_release.py`. `tools/release.sh` is a checked wrapper around it.
 
 ## What the script does
@@ -10,10 +10,13 @@ version may be a final `MAJOR.MINOR.PATCH` or a SemVer prerelease such as
 `1.0.0-rc1`; leading zeroes such as `1.0.00` are rejected.
 
 - updates `hardware/nrf54l15clean/nrf54l15clean/platform.txt`
+- updates the native PlatformIO `platform.json` to the same version
 - updates both generated core version headers:
   - `cores/nrf54l15/CoreVersionGenerated.h`
   - `cores/nrf54lm20b/CoreVersionGenerated.h`
 - builds a content-addressed `nrf54l15clean-<version>-<sha>.tar.bz2`
+- builds a self-contained `platform-nrf54l15clean-<version>-<sha>.tar.bz2`
+  for PlatformIO, using the same staged framework files and exclusions
 - includes the OpenThread sources required by the advertised Thread and Matter menus
 - dereferences package symlinks so Windows installs do not break
 - verifies the archive has one root directory and no symlinks
@@ -21,6 +24,8 @@ version may be a final `MAJOR.MINOR.PATCH` or a SemVer prerelease such as
 - verifies every generated index that advertises the new version against the exact archive
 - compiles representative BLE security/privacy, Thread, and Matter targets from
   the extracted archive
+- compiles both XIAO MCU families using the extracted PlatformIO package, without
+  an Arduino CLI installation or sketchbook dependency
 - copies the verified indexes from `dist/` to the repository root
 
 The wrapper never commits, pushes, tags, or publishes implicitly. Review the generated
@@ -30,6 +35,26 @@ Host tools are not bundled in every core release. The package index points to
 the permanent `host-tools-v1.1.5` GitHub release, so users get consistent,
 self-describing host-tool downloads without making every board package archive
 huge.
+
+The PlatformIO archive carries the native platform builder, all board manifests,
+examples, notices, and the Arduino framework subtree, including the existing
+upload helpers. Its compiler is a PlatformIO package dependency. The
+`platformio` object in `dist/release-manifest.json` records its URL, filename,
+size, and SHA-256 separately from the Arduino `platform` object. Both archives
+have normalized timestamps and dereferenced symlinks; development build folders
+and unrelated repository files are not included.
+Downloaded upload-tool dependencies under the framework's `tools/runtime/`
+are always excluded from both packages; the shipped helpers and pinned
+requirements remain included.
+
+Install the build prerequisites before using the checked wrapper:
+
+```bash
+python3 -m pip install platformio==6.1.18
+```
+
+Arduino CLI and its ARM compiler dependency remain required for the existing
+Arduino archive checks. PlatformIO builds do not use that Arduino installation.
 
 ## Normal Release Flow
 
@@ -64,7 +89,7 @@ clean commit; the resulting bytes must reproduce the committed index hashes:
 
 ```bash
 set -euo pipefail
-git add hardware/nrf54l15clean/nrf54l15clean/platform.txt \
+git add platform.json hardware/nrf54l15clean/nrf54l15clean/platform.txt \
   hardware/nrf54l15clean/nrf54l15clean/cores/*/CoreVersionGenerated.h \
   package_nrf54l15clean*.json
 git commit --amend --no-edit
@@ -171,10 +196,13 @@ test -n "$CI_RUN_ID"
 gh run watch "$CI_RUN_ID" --exit-status
 ```
 
-The Release workflow rebuilds the deterministic archive, checks it against the
+The Release workflow rebuilds the deterministic archives, checks the Arduino archive against the
 committed indexes, verifies that the immutable host assets are already public,
-compiles advertised features from the extracted archive, publishes the core
-assets, and verifies the public bytes.
+compiles advertised features from the extracted Arduino archive and both MCU
+families from the PlatformIO archive, publishes the core assets, and verifies
+the public bytes of both packages. The PlatformIO package is installed by its
+release-asset URL; publishing a GitHub release does not publish to the PlatformIO
+registry. See [PlatformIO setup](PLATFORMIO.md) for project configuration.
 Tags with a prerelease suffix are published as GitHub prereleases and are not marked latest.
 Prerelease versions are added only to
 `package_nrf54l15clean_archive_index.json`. The normal
@@ -232,6 +260,19 @@ arduino-cli --config-file "$TMP_CLI/arduino-cli.yaml" compile \
   --fqbn nrf54l15clean:nrf54l15clean:xiao_nrf54lm20b \
   /path/to/sketch
 ```
+
+For a focused PlatformIO package check, pass the exact archive from the manifest:
+
+```bash
+PLATFORMIO_ARCHIVE="$(python3 -c 'import json; print(json.load(open("dist/release-manifest.json"))["platformio"]["archivePath"])')"
+python3 scripts/verify_platformio_package.py \
+  --archive "$PLATFORMIO_ARCHIVE" --manifest dist/release-manifest.json
+```
+
+This installs and builds the archive, rather than falling back to the repository
+source. `python3 scripts/test_platformio_release.py` separately checks version
+synchronization, deterministic packaging, shared Arduino-framework bytes,
+exclusions, notices, and symlink dereferencing without compiling sketches.
 
 ## Common Failure Points
 

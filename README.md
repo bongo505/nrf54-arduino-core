@@ -7,6 +7,7 @@ runtime or external nRF Connect SDK installation.**
 
 [![Release](https://img.shields.io/github/v/release/lolren/nrf54-arduino-core?color=00d4ff&label=latest)](https://github.com/lolren/nrf54-arduino-core/releases)
 [![Boards](https://img.shields.io/badge/board_targets-6-00d4ff)](#supported-boards)
+[![PlatformIO](https://img.shields.io/badge/PlatformIO-native%20support-orange?logo=platformio)](#native-platformio-support)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20third--party-00d4ff)](LICENSE)
 
 *A register-level Arduino core for Nordic's nRF54L family, with a mature
@@ -16,6 +17,22 @@ and direct access to the VPR RISC-V coprocessor.*
 </div>
 
 ---
+
+## Native PlatformIO Support
+
+**Build, upload, monitor and debug all six board targets directly from PlatformIO.**
+
+Use the same Arduino API, bundled BLE libraries and board options in VS Code or
+from the command line. Native support includes GDB debugging, Unity tests and
+ELF/HEX/BIN/UF2 output, without requiring Arduino IDE or Arduino CLI.
+
+**[Start with the PlatformIO tutorial below](#platformio-quick-start)** ·
+[Complete PlatformIO guide](docs/PLATFORMIO.md) ·
+[Blink example](examples/platformio/blink) ·
+[BLE UART example](examples/platformio/ble_uart)
+
+PlatformIO support is available from this repository's `main` branch. Published
+Arduino releases through `1.0.20` predate it; follow the Git installation below.
 
 ## Project Scope
 
@@ -50,6 +67,7 @@ implementations.
 | Capability | Practical benefit |
 |---|---|
 | **Arduino workflow** | Install from Boards Manager, select a board, compile normal `.ino` sketches, and upload over a connected CMSIS-DAP probe |
+| **Native PlatformIO** | Build all six board targets, use bundled and registry libraries, upload, monitor serial, run Unity tests, and debug with GDB without Arduino IDE or CLI; see the [quick start](#platformio-quick-start) |
 | **No Zephyr runtime** | Shorter build cycles, smaller applications, and fewer framework layers between a sketch and the hardware |
 | **Direct peripheral access** | GPIO, ADC, PWM, serial buses, audio, NFC, DPPI, GRTC, watchdog, comparators, and power controls are implemented against nRF54L hardware |
 | **Useful BLE depth** | Peripheral, central, dual-role, GATT server/client, HID, BLE UART, PHY/DLE/MTU control, LE Secure Connections, bonding, OOB, Numeric Comparison, privacy/RPA, and CSRK signed writes |
@@ -66,6 +84,7 @@ validate the complete product against the relevant conformance suite.
 
 ## Contents
 
+- [PlatformIO quick start](#platformio-quick-start)
 - [Quick install](#quick-install)
 - [Getting started](#getting-started)
 - [Supported boards](#supported-boards)
@@ -77,6 +96,102 @@ validate the complete product against the relevant conformance suite.
 - [Maturity and limitations](#stack-maturity)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
+
+## PlatformIO Quick Start
+
+### 1. Install PlatformIO And Git
+
+Install [PlatformIO IDE for VS Code](https://docs.platformio.org/en/latest/integration/ide/vscode.html)
+or [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html)
+6.1.18 or newer, plus [Git](https://git-scm.com/downloads).
+
+On Windows, enable **Developer Mode** in Windows settings, then run this once
+before the first build so Git preserves the core's linked headers:
+
+```powershell
+git config --global core.symlinks true
+```
+
+### 2. Create A Project
+
+Open a new project folder in VS Code. It needs these two files:
+
+```text
+my-nrf54-project/
+  platformio.ini
+  src/
+    main.cpp
+```
+
+Use this `platformio.ini` for a **XIAO nRF54L15 / Sense**:
+
+```ini
+[env:xiao]
+platform = https://github.com/lolren/nrf54-arduino-core.git#main
+board = xiao_nrf54l15
+framework = arduino
+upload_protocol = pyocd
+monitor_speed = 115200
+```
+
+For a **XIAO nRF54LM20A / Sense**, change just the board line:
+
+```ini
+board = xiao_nrf54lm20b
+```
+
+The historical `lm20b` board ID selects the **LM20A** hardware and memory layout.
+The [full board list and options](docs/PLATFORMIO.md#board-ids) cover HOLYIOT,
+generic modules and the Nordic DK too.
+
+### 3. Add Your First Sketch
+
+Put this in `src/main.cpp`:
+
+```cpp
+#include <Arduino.h>
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(LED_BUILTIN, OUTPUT);
+}
+
+void loop() {
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(500);
+  digitalWrite(LED_BUILTIN, HIGH);
+  Serial.print("Uptime (ms): ");
+  Serial.println(millis());
+  delay(500);
+}
+```
+
+### 4. Build, Upload And Monitor
+
+Connect one board over USB and run these commands from your project folder:
+
+```bash
+pio run
+pio run -t upload
+pio device monitor
+```
+
+The first build downloads the core and its compiler automatically. The pyOCD
+upload helper installs its pinned Python dependencies when needed. The serial
+monitor should print an increasing uptime about once per second; press
+`Ctrl+C` to exit it. In VS Code, the PlatformIO **Build**, **Upload** and
+**Serial Monitor** actions run the same workflow.
+
+For multiple connected boards, select the upload probe with `board_upload.uid`
+and the serial device with `monitor_port`; see
+[upload and serial configuration](docs/PLATFORMIO.md#upload-and-serial-monitoring).
+
+The repository includes ready-to-run [Blink](examples/platformio/blink) and
+[BLE UART](examples/platformio/ble_uart) projects. The BLE example advertises as
+`X54-PIO`; attach the LM20A antenna before radio testing. See the
+[complete guide](docs/PLATFORMIO.md) for third-party libraries, 128 MHz operation,
+debugging, Unity tests and validation limits. Pin the Git URL to a specific
+commit instead of `#main` when you need a reproducible project.
 
 ## Quick Install
 

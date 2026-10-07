@@ -1,0 +1,39 @@
+{
+  "build": {
+    "arduino": {
+      "ldscript": "nrf54l15_linker_script.ld"
+    },
+    "core": "nrf54l15",
+    "cpu": "cortex-m33",
+    "f_cpu": "64000000L",
+    "mcu": "nrf54l15",
+    "variant": "nrf54l15dk_pca10156"
+  },
+  "debug": {
+    "default_tool": "pyocd",
+    "onboard_tools": [],
+    "svd_path": ""
+  },
+  "frameworks": [
+    "arduino"
+  ],
+  "name": "Nordic PCA10156 nRF54L15 DK",
+  "upload": {
+    "maximum_ram_size": 155648,
+    "maximum_size": 1548288,
+    "protocol": "auto",
+    "protocols": [
+      "auto",
+      "nrf_ocd",
+      "pyocd",
+      "pyocd_vm",
+      "jlink",
+      "uf2",
+      "custom"
+    ],
+    "require_upload_port": false,
+    "target": "nrf54l"
+  },
+  "url": "https://github.com/lolren/nrf54-arduino-core",
+  "vendor": "Nordic Semiconductor"
+}

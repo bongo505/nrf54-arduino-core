@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 build/
+.pio/
+.vscode/
+/hardware/**/tools/runtime/
 
 # Generated/import scratch files that do not belong in the source tree
 /mbedtls_*.cpp

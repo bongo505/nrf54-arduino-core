@@ -101,15 +101,97 @@ class NrfOcdTransportTests(unittest.TestCase):
             ),
         ]
 
-        actual = UPLOAD.upload_nrf_ocd(
-            "fixture.hex",
-            "nrf54lm20a",
-            "140EBF71",
-            nrf_ocd_cmd=fake_nrf_ocd,
-        )
+        with mock.patch.object(UPLOAD, "run", return_value=subprocess.CompletedProcess(
+            ["nrf_ocd", "list"], 0, "  0   Test CMSIS-DAP    140EBF71    nrf54lm20a\n", ""
+        )):
+            actual = UPLOAD.upload_nrf_ocd(
+                "fixture.hex", "nrf54lm20a", None, nrf_ocd_cmd=fake_nrf_ocd,
+            )
 
         self.assertEqual(actual, UPLOAD.NRF_OCD_TRANSPORT_FALLBACK)
         self.assertNotEqual(actual, 0)
+
+    def test_uid_selected_native_call_fails_before_any_native_command(self):
+        with mock.patch.object(UPLOAD, "run") as run, mock.patch.object(UPLOAD.subprocess, "Popen") as popen:
+            status = UPLOAD.upload_nrf_ocd("fixture.hex", "nrf54lm20a", "missing-uid", nrf_ocd_cmd=["nrf_ocd"])
+        self.assertNotEqual(status, 0)
+        run.assert_not_called()
+        popen.assert_not_called()
+
+    def test_native_autoselect_rejects_empty_ambiguous_or_failed_inventory(self):
+        row = "  0   Test CMSIS-DAP    140EBF71    nrf54lm20a\n"
+        for status, output in (
+            (0, ""), (0, row + row), (1, row), (0, "unrecognized output"),
+            (0, row + "  1   Other CMSIS-DAP    OTHER    nrf52840\n"),
+            (0, "  0   invalid row\n"),
+        ):
+            with self.subTest(status=status, output=output), mock.patch.object(UPLOAD, "run", return_value=subprocess.CompletedProcess(["nrf_ocd", "list"], status, output, "")), mock.patch.object(UPLOAD.subprocess, "Popen") as popen:
+                self.assertNotEqual(UPLOAD.upload_nrf_ocd("fixture.hex", "nrf54lm20a", None, nrf_ocd_cmd=["nrf_ocd"]), 0)
+                popen.assert_not_called()
+
+
+class ProbeIdentitySafetyTests(unittest.TestCase):
+    def test_inferred_uid_is_never_dropped_when_probe_disappears(self):
+        no_probe = subprocess.CompletedProcess(["pyocd", "load"], 1, "", "No connected debug probe matches unique ID")
+        with mock.patch.object(UPLOAD, "flash_hex", return_value=no_probe) as flash, mock.patch.object(UPLOAD, "print_linux_probe_permission_hint"):
+            status = UPLOAD.upload_pyocd(
+                "fixture.hex", "nrf54lm20a", "absent-probe", 2, 0,
+                allow_uid_fallback=True, pyocd_cmd=["pyocd"], probe_type="cmsisdap",
+            )
+        self.assertNotEqual(status, 0)
+        self.assertEqual(flash.call_count, 2)
+        for call in flash.call_args_list:
+            self.assertEqual(call.args[2], "cmsisdap:absent-probe")
+
+    def test_postupload_reset_uses_same_uid_and_never_native(self):
+        for target in ("nrf54l", "nrf54lm20a"):
+            with self.subTest(target=target), mock.patch.object(UPLOAD, "flash_hex", return_value=result(0)), mock.patch.object(UPLOAD, "run", return_value=result(0)) as run, mock.patch.object(UPLOAD, "detect_nrf_ocd_command") as native:
+                status = UPLOAD.upload_pyocd("fixture.hex", target, "selected-probe", 1, 0, pyocd_cmd=["pyocd"], probe_type="cmsisdap")
+                self.assertEqual(status, 0)
+                native.assert_not_called()
+                command = run.call_args.args[0]
+                self.assertEqual(command[:2], ["pyocd", "reset"])
+                self.assertIn("cmsisdap:selected-probe", command)
+                self.assertIn("auto_unlock=false", command)
+                self.assertEqual("--script" in command, target == "nrf54lm20a")
+
+    def test_postupload_reset_failure_is_reported(self):
+        with mock.patch.object(UPLOAD, "flash_hex", return_value=result(0)), mock.patch.object(UPLOAD, "run", return_value=result(9)):
+            status = UPLOAD.upload_pyocd("fixture.hex", "nrf54l", "selected", 1, 0, pyocd_cmd=["pyocd"], probe_type="cmsisdap")
+        self.assertEqual(status, 9)
+
+    def test_safe_mode_still_skips_reset(self):
+        with mock.patch.object(UPLOAD, "flash_hex", return_value=result(0)), mock.patch.object(UPLOAD, "run") as run:
+            self.assertEqual(UPLOAD.upload_pyocd("fixture.hex", "nrf54l", "selected", 1, 0, pyocd_cmd=["pyocd"], safe_mode=True, probe_type="cmsisdap"), 0)
+            run.assert_not_called()
+
+    def test_selected_uid_routes_native_to_pyocd_and_disables_native_fallback(self):
+        for explicit in (True, False):
+            for requested_runner in ("nrf_ocd", "pyocd"):
+                with self.subTest(explicit=explicit, runner=requested_runner):
+                    argv = ["upload.py", "--hex", "fixture.hex", "--runner", requested_runner, "--probe-type", "cmsisdap"]
+                    argv.extend(["--uid", "selected-probe"] if explicit else ["--port", "COM7"])
+                    with mock.patch.object(UPLOAD.sys, "argv", argv), mock.patch.object(UPLOAD.os.path, "isfile", return_value=True), mock.patch.object(UPLOAD, "infer_uid_from_port", return_value="selected-probe"), mock.patch.object(UPLOAD, "preflight_linux_probe_access", return_value=False), mock.patch.object(UPLOAD, "detect_pyocd_command", return_value=["pyocd"]), mock.patch.object(UPLOAD, "upload_pyocd", return_value=6) as pyocd, mock.patch.object(UPLOAD, "upload_nrf_ocd") as native:
+                        self.assertEqual(UPLOAD.main(), 6)
+                        native.assert_not_called()
+                        self.assertEqual(pyocd.call_args.args[2], "selected-probe")
+                        self.assertFalse(pyocd.call_args.kwargs["allow_uid_fallback"])
+
+    def test_unmapped_serial_port_cannot_fall_back_to_another_board(self):
+        argv = ["upload.py", "--hex", "fixture.hex", "--runner", "nrf_ocd", "--port", "COM7"]
+        with mock.patch.object(UPLOAD.sys, "argv", argv), mock.patch.object(UPLOAD, "infer_uid_from_port", return_value=None), mock.patch.object(UPLOAD, "upload_pyocd") as pyocd, mock.patch.object(UPLOAD, "upload_nrf_ocd") as native:
+            self.assertNotEqual(UPLOAD.main(), 0)
+            pyocd.assert_not_called()
+            native.assert_not_called()
+
+    def test_explicit_uf2_upload_never_falls_back_to_a_debug_probe(self):
+        argv = ["upload.py", "--hex", "fixture.hex", "--uf2", "fixture.uf2", "--runner", "uf2"]
+        for uf2_status in (0, 1, 6):
+            with self.subTest(uf2_status=uf2_status), mock.patch.object(UPLOAD.sys, "argv", argv), mock.patch.object(UPLOAD.os.path, "isfile", return_value=True), mock.patch.object(UPLOAD, "infer_uid_from_port", return_value=None), mock.patch.object(UPLOAD, "upload_uf2", return_value=uf2_status) as uf2, mock.patch.object(UPLOAD, "upload_pyocd") as pyocd, mock.patch.object(UPLOAD, "upload_nrf_ocd") as native:
+                self.assertEqual(UPLOAD.main(), uf2_status)
+                uf2.assert_called_once()
+                pyocd.assert_not_called()
+                native.assert_not_called()
 
 
 class JLinkUploadTests(unittest.TestCase):

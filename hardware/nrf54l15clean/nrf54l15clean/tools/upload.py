@@ -1241,6 +1241,9 @@ def upload_pyocd(
     port: Optional[str] = None,
     probe_type: Optional[str] = None,
 ) -> int:
+    # Keep the legacy argument accepted, but never broaden a selected probe to
+    # auto-select after an error. The selected board may have been unplugged.
+    del allow_uid_fallback
     pyocd_cmd = pyocd_cmd if pyocd_cmd is not None else detect_pyocd_command(host_tools_path)
     if pyocd_cmd is None:
         print("ERROR: pyocd is not installed or not available in PATH", file=sys.stderr)
@@ -1348,38 +1351,6 @@ def upload_pyocd(
                         probe_type=probe_type,
                     )
 
-        if (
-            load_result.returncode != 0
-            and allow_uid_fallback
-            and uid is not None
-            and looks_like_no_probe_error(load_result)
-        ):
-            print(
-                f"Inferred probe UID '{uid}' did not match an accessible debug probe; "
-                f"retrying with {probe_type or 'any'} probe auto-select...",
-                file=sys.stderr,
-            )
-            raw_uid = None
-            if probe_type == "jlink":
-                discovered_uid, ambiguous = select_jlink_probe_uid(pyocd_cmd)
-                if ambiguous:
-                    return 8
-                if discovered_uid is None:
-                    report_missing_jlink_probe()
-                    return 6
-                raw_uid = discovered_uid
-            uid = qualify_pyocd_probe_uid(raw_uid, probe_type)
-            allow_uid_fallback = False
-            load_result = flash_hex(
-                pyocd_cmd,
-                target,
-                uid,
-                hex_path,
-                connect_mode=connect_mode,
-                safe_mode=safe_mode,
-                probe_type=probe_type,
-            )
-
         if load_result.returncode == 0:
             break
         maybe_wait_before_retry(attempt, retries, retry_delay)
@@ -1402,29 +1373,18 @@ def upload_pyocd(
         print("If the sketch does not start, press RESET or power-cycle the board.")
         return 0
 
-    # pyOCD is invoked with --no-reset above so flashing stays stable across
-    # retry modes. Start the sketch explicitly after a successful load.
-    import time as _time
-    _time.sleep(1)
-    try:
-        nrf_ocd = detect_nrf_ocd_command(host_tools_path, allow_download=False)
-        if nrf_ocd:
-            ocd_tgt = target.strip().lower()
-            if ocd_tgt in ("nrf54l",):
-                ocd_tgt = "nrf54l15"
-            reset_cmd = [*nrf_ocd, "-t", ocd_tgt, "reset"]
-            if raw_uid:
-                reset_cmd = [*nrf_ocd, "-t", ocd_tgt, "-u", raw_uid, "reset"]
-            elif port:
-                reset_cmd = [*nrf_ocd, "-p", port, "-t", ocd_tgt, "reset"]
-            result = subprocess.run(reset_cmd, timeout=15.0, capture_output=True, text=True)
-            if result.returncode != 0:
-                for line in (result.stderr or "").split("\n"):
-                    if line.strip() and "INFO" not in line:
-                        print(line, file=sys.stderr)
-    except (Exception, subprocess.TimeoutExpired):
-        pass
-    return 0
+    # Keep reset on the same UID-restricted transport. The bundled native
+    # tool can ignore an unmatched UID and reset a different connected board.
+    reset_cmd = [*pyocd_cmd, "reset", "-W", "-t", target]
+    reset_cmd = append_pyocd_target_script(reset_cmd, target)
+    reset_cmd = append_uid(reset_cmd, uid)
+    reset_cmd = append_pyocd_probe_options(reset_cmd, probe_type)
+    reset_cmd.extend(["-O", "auto_unlock=false"])
+    reset_result = run(reset_cmd, timeout=15.0)
+    print_result(reset_result)
+    if reset_result.returncode != 0:
+        print("ERROR: Firmware was written, but resetting the selected probe failed.", file=sys.stderr)
+    return reset_result.returncode
 
 def open_nrf_ocd_asset_for_host() -> Optional[tuple]:
     system = platform.system().lower()
@@ -1574,6 +1534,12 @@ def upload_nrf_ocd(
     host_tools_path: Optional[Path] = None,
     nrf_ocd_cmd=None,
 ):
+    # nrf_ocd 0.3.8 falls back to the only probe if its UID lookup fails.
+    # A preflight inventory cannot close the unplug/replug race; selected
+    # probes must stay on pyOCD until the native tool supports strict UIDs.
+    if normalize_uid(uid) is not None:
+        print("ERROR: UID-selected uploads require pyOCD; refusing native probe fallback.", file=sys.stderr)
+        return 4
     nrf_ocd_cmd = (
         nrf_ocd_cmd
         if nrf_ocd_cmd is not None
@@ -1581,6 +1547,22 @@ def upload_nrf_ocd(
     )
     if nrf_ocd_cmd is None:
         return -1  # not found
+    inventory = run([*nrf_ocd_cmd, "list"], timeout=15.0)
+    probe_rows = [
+        line for line in (inventory.stdout or "").splitlines()
+        if re.match(r"^\s*\d+\s+", line)
+    ]
+    valid_single_probe = len(probe_rows) == 1 and re.fullmatch(
+        r"\s*\d+\s+.+\s+nrf54(?:l15|lm20a)\s*", probe_rows[0]
+    )
+    if inventory.returncode != 0 or not valid_single_probe:
+        print_result(inventory)
+        print(
+            "ERROR: Native auto-select requires exactly one CMSIS-DAP probe. "
+            "Select a probe UID or serial port to use pyOCD safely.",
+            file=sys.stderr,
+        )
+        return 4
     target_map = {
         "nrf54l": "nrf54l15",
     }
@@ -1588,14 +1570,10 @@ def upload_nrf_ocd(
     if ocd_target in target_map:
         ocd_target = target_map[ocd_target]
     args = [*nrf_ocd_cmd, "-t", ocd_target]
-    # nrf_ocd can auto-select a single probe. When a UID is known, pass it;
-    # do not pass a serial-port path as -u.
-    if uid:
-        args.extend(["-u", uid])
     args.extend(["-e", "chip", "-R", "--no-verify", "load", hex_path])
     print(f"Flashing {hex_path}")
     print(f"Runner: nrf_ocd")
-    print(f"Probe UID: {uid or 'auto-select'}")
+    print("Probe UID: auto-select")
     captured_output: List[str] = []
     try:
         # Run nrf_ocd, streaming all output in real-time
@@ -1713,7 +1691,13 @@ def main() -> int:
         explicit_uid = normalize_uid(os.environ.get("NRF54L15_JLINK_UID"))
     inferred_uid = infer_uid_from_port(args.port, host_tools_path) if explicit_uid is None else None
     selected_uid = explicit_uid if explicit_uid is not None else inferred_uid
-    allow_inferred_uid_fallback = explicit_uid is None and inferred_uid is not None
+    if requested_runner != "uf2" and not unresolved_property(args.port) and selected_uid is None:
+        print(
+            "ERROR: Cannot identify the debug probe for the selected serial port. "
+            "Specify its probe UID; refusing to auto-select a different board.",
+            file=sys.stderr,
+        )
+        return 8
     uf2_path = derived_uf2_path(args.hex, args.uf2)
     uf2_labels = split_csv(args.uf2_labels) or list(DEFAULT_UF2_LABELS)
     pyocd_safe_mode = resolve_pyocd_safe_mode(args.pyocd_safe)
@@ -1727,6 +1711,10 @@ def main() -> int:
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 4
+
+    if runner == "nrf_ocd" and selected_uid is not None:
+        print("Using pyOCD to keep the selected probe UID strict across upload and reset.")
+        runner = "pyocd"
 
     rc = 1
     tried_nrf_ocd = False
@@ -1772,7 +1760,7 @@ def main() -> int:
             args.hex,
             args.target,
             selected_uid,
-            allow_uid_fallback=allow_inferred_uid_fallback,
+            allow_uid_fallback=False,
             retries=args.retries,
             retry_delay=args.retry_delay,
             host_tools_path=host_tools_path,
@@ -1806,7 +1794,7 @@ def main() -> int:
                 args.hex,
                 args.target,
                 selected_uid,
-                allow_uid_fallback=allow_inferred_uid_fallback,
+                allow_uid_fallback=False,
                 retries=args.retries,
                 retry_delay=args.retry_delay,
                 host_tools_path=host_tools_path,
@@ -1820,7 +1808,7 @@ def main() -> int:
         print(f"ERROR: Unsupported runner: {runner}", file=sys.stderr)
         return 4
 
-    if rc != 0 and not tried_nrf_ocd and pyocd_probe_type != "jlink":
+    if runner == "pyocd" and rc != 0 and not tried_nrf_ocd and pyocd_probe_type != "jlink" and selected_uid is None:
         # Final fallback: try nrf_ocd
         nrf_rc = upload_nrf_ocd(
             args.hex,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Arduino Board Manager release artifacts for nRF54L15 boards."""
+"""Build Arduino Board Manager and PlatformIO release artifacts for nRF54 boards."""
 
 from __future__ import annotations
 
@@ -35,6 +35,18 @@ REQUIRED_HOST_TOOL_REQUIREMENTS = (
 )
 REQUIRED_HOST_TOOL_NOTICE_FILES = ("LICENSE", "THIRD_PARTY_NOTICES.md")
 ARCHIVE_HASH_LEN = 12
+GENERATED_PLATFORM_PACKAGE_EXCLUDES = ("tools/runtime",)
+PLATFORMIO_PACKAGE_PATHS = (
+    "platform.json",
+    "platform.py",
+    "builder",
+    "boards",
+    "examples/platformio",
+    "docs/PLATFORMIO.md",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+)
 OPENTHREAD_PLATFORM_PACKAGE_EXCLUDES = (
     "libraries/Nrf54L15-Clean-Implementation/third_party/openthread-core",
     "libraries/Nrf54L15-Clean-Implementation/src/openthread_core_stage",
@@ -304,6 +316,65 @@ def update_platform_txt_version(platform_dir: Path, version: str) -> None:
     else:
         raise SystemExit(f"Missing version= entry in {platform_path}")
     platform_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def update_platformio_version(root: Path, version: str) -> bool:
+    """Keep legacy Arduino-only source trees usable by the release builder."""
+    manifest_path = root / "platform.json"
+    if not manifest_path.is_file():
+        return False
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or not manifest.get("name"):
+        raise SystemExit(f"Invalid PlatformIO platform manifest: {manifest_path}")
+    manifest["version"] = version
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def build_platformio_archive(
+    root: Path,
+    platform_dir: Path,
+    staged_platform: Path,
+    dist_dir: Path,
+    version: str,
+    release_base_url: str,
+    platform_excludes: tuple[str, ...],
+) -> dict:
+    """Package native integration and the identical staged Arduino framework."""
+    prefix = f"platform-nrf54l15clean-{version}"
+    with tempfile.TemporaryDirectory(prefix="nrf54-platformio-stage-") as td:
+        stage = Path(td) / prefix
+        stage.mkdir()
+        for name in PLATFORMIO_PACKAGE_PATHS:
+            source = root / name
+            destination = stage / name
+            if source.is_dir():
+                stage_git_release_tree(root, source, destination)
+            elif source.is_file():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            else:
+                raise SystemExit(f"PlatformIO package source not found: {source}")
+        framework_rel = platform_dir.relative_to(root)
+        shutil.copytree(staged_platform, stage / framework_rel, symlinks=True)
+        excludes = tuple(
+            f"{framework_rel.as_posix()}/{path}" for path in platform_excludes
+        )
+        temp_archive = dist_dir / f".{prefix}.tar.bz2"
+        build_archive(stage, temp_archive, prefix, excludes=excludes)
+    archive_path, name, checksum, size = finalize_content_addressed_archive(
+        temp_archive, prefix, ".tar.bz2"
+    )
+    platform_manifest = json.loads((root / "platform.json").read_text(encoding="utf-8"))
+    return {
+        "name": platform_manifest["name"],
+        "version": version,
+        "archiveFileName": name,
+        "archivePath": str(archive_path),
+        "url": f"{release_base_url}/{name}",
+        "checksum": f"SHA-256:{checksum}",
+        "size": size,
+    }
 
 
 def make_platform_entry(
@@ -621,6 +692,7 @@ def write_release_manifest(
     platform_excludes: tuple[str, ...],
     tools: list[dict],
     indexes: dict,
+    platformio: dict | None = None,
 ) -> None:
     prerelease = is_prerelease_version(version)
     manifest = {
@@ -631,6 +703,8 @@ def write_release_manifest(
         "tools": tools,
         "indexes": indexes,
     }
+    if platformio is not None:
+        manifest["platformio"] = platformio
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
@@ -696,12 +770,13 @@ def main() -> int:
     dist_dir.mkdir(parents=True, exist_ok=True)
     update_core_version_header(platform_dir, version)
     update_platform_txt_version(platform_dir, version)
+    has_platformio = update_platformio_version(root, version)
 
     release_base_url = args.release_base_url.format(version=version)
     host_tools_release_base_url = (
         args.host_tools_release_base_url or release_base_url
     ).format(version=version, host_tool_version=HOST_TOOL_VERSION)
-    platform_excludes = (
+    platform_excludes = GENERATED_PLATFORM_PACKAGE_EXCLUDES + (
         OPENTHREAD_PLATFORM_PACKAGE_EXCLUDES
         if args.exclude_openthread_core
         else ()
@@ -713,6 +788,7 @@ def main() -> int:
 
     platform_ext = ".tar.bz2"
     temp_archive_path = dist_dir / f".{args.packager}-{version}{platform_ext}"
+    platformio_entry = None
     with tempfile.TemporaryDirectory(prefix="nrf54-platform-stage-") as td:
         staged_platform = Path(td) / platform_dir.name
         stage_git_release_tree(root, platform_dir, staged_platform)
@@ -722,6 +798,11 @@ def main() -> int:
             f"{args.packager}-{version}",
             excludes=platform_excludes,
         )
+        if has_platformio:
+            platformio_entry = build_platformio_archive(
+                root, platform_dir, staged_platform, dist_dir, version,
+                release_base_url, platform_excludes,
+            )
     archive_path, archive_name, archive_sha256, archive_size = finalize_content_addressed_archive(
         temp_archive_path,
         f"{args.packager}-{version}",
@@ -850,6 +931,7 @@ def main() -> int:
             "size": archive_size,
         },
         platform_excludes=platform_excludes,
+        platformio=platformio_entry,
         tools=tool_release_entries,
         indexes={
             "stable": str(stable_index_path),
@@ -863,6 +945,9 @@ def main() -> int:
     print(f"platform archive: {archive_path}")
     print(f"platform sha256:  {archive_sha256}")
     print(f"platform size:    {archive_size}")
+    if platformio_entry is not None:
+        print(f"platformio archive: {platformio_entry['archivePath']}")
+        print(f"platformio sha256:  {platformio_entry['checksum'].split(':', 1)[1]}")
     for system in tool_systems:
         if existing_tool_entry is not None:
             print(f"tool reused:      {system['host']} -> {system['archiveFileName']}")

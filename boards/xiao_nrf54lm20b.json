@@ -1,0 +1,45 @@
+{
+  "build": {
+    "arduino": {
+      "ldscript": "nrf54lm20b_linker_script.ld"
+    },
+    "core": "nrf54lm20b",
+    "cpu": "cortex-m33",
+    "f_cpu": "64000000L",
+    "mcu": "nrf54lm20a",
+    "variant": "xiao_nrf54lm20b",
+    "hwids": [
+      [
+        "0x2886",
+        "0x0068"
+      ]
+    ]
+  },
+  "debug": {
+    "default_tool": "pyocd",
+    "onboard_tools": [],
+    "svd_path": ""
+  },
+  "frameworks": [
+    "arduino"
+  ],
+  "name": "XIAO nRF54LM20A",
+  "upload": {
+    "maximum_ram_size": 523584,
+    "maximum_size": 2072576,
+    "protocol": "auto",
+    "protocols": [
+      "auto",
+      "nrf_ocd",
+      "pyocd",
+      "pyocd_vm",
+      "jlink",
+      "uf2",
+      "custom"
+    ],
+    "require_upload_port": false,
+    "target": "nrf54lm20a"
+  },
+  "url": "https://github.com/lolren/nrf54-arduino-core",
+  "vendor": "Seeed Studio"
+}

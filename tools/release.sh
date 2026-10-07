@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Canonical Board Manager release-artifact builder.
+# Canonical Arduino and PlatformIO release-artifact builder.
 
 set -euo pipefail
 
@@ -40,6 +40,10 @@ python3 "$ROOT/scripts/test_core_io_regressions.py"
 python3 "$ROOT/scripts/test_bluefruit_client_contracts.py"
 python3 "$ROOT/scripts/test_upload_helper.py"
 python3 "$ROOT/scripts/test_release_versions.py"
+python3 "$ROOT/scripts/sync_platformio_boards.py" --check
+python3 "$ROOT/scripts/test_platformio_integration.py"
+python3 "$ROOT/scripts/test_platformio_transport.py"
+python3 "$ROOT/scripts/test_platformio_release.py"
 python3 "$ROOT/scripts/test_lm20a_pdm_contract.py"
 python3 "$ROOT/scripts/test_cracen_ikg_contract.py"
 python3 "$ROOT/scripts/test_lm20a_cracen_rng_header.py"
@@ -47,6 +51,7 @@ python3 "$ROOT/scripts/build_release.py" "${ARGS[@]}" "$@"
 
 MANIFEST="$ROOT/dist/release-manifest.json"
 ARCHIVE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["platform"]["archivePath"])' "$MANIFEST")"
+PLATFORMIO_ARCHIVE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["platformio"]["archivePath"])' "$MANIFEST")"
 CHANNEL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["channel"])' "$MANIFEST")"
 ARTIFACT_INDEXES="$(
     python3 -c \
@@ -69,9 +74,12 @@ for NAME in \
 done
 
 python3 "$ROOT/scripts/verify_release_archive.py" --archive "$ARCHIVE"
+python3 "$ROOT/scripts/verify_platformio_package.py" \
+    --archive "$PLATFORMIO_ARCHIVE" --manifest "$MANIFEST"
 
 echo
 echo "Release artifacts are ready in $ROOT/dist"
 echo "Release channel: $CHANNEL"
 echo "Platform archive: $ARCHIVE"
+echo "PlatformIO archive: $PLATFORMIO_ARCHIVE"
 echo "Review and commit the version/index changes before publishing v$VERSION."

@@ -319,6 +319,8 @@ class ReleaseVersionTests(unittest.TestCase):
 
     def test_validation_only_is_read_only(self) -> None:
         platform_before = (PLATFORM / "platform.txt").read_bytes()
+        platformio_path = ROOT / "platform.json"
+        platformio_before = platformio_path.read_bytes() if platformio_path.exists() else None
         headers_before = {
             path: path.read_bytes()
             for path in sorted((PLATFORM / "cores").glob("*/CoreVersionGenerated.h"))
@@ -335,6 +337,8 @@ class ReleaseVersionTests(unittest.TestCase):
         )
         self.assertIn("release version OK: 1.0.1-rc1", completed.stdout)
         self.assertEqual(platform_before, (PLATFORM / "platform.txt").read_bytes())
+        if platformio_before is not None:
+            self.assertEqual(platformio_before, platformio_path.read_bytes())
         for path, content in headers_before.items():
             self.assertEqual(content, path.read_bytes())
 
