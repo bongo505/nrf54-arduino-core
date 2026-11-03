@@ -139,7 +139,10 @@ constexpr uint8_t kLedModeHost = 2U;
 constexpr uint8_t kLedOffsetMode = 0x00U;
 constexpr uint8_t kLedOffsetSet = 0x03U;
 constexpr uint8_t kLedOffsetClr = 0x04U;
+constexpr uint8_t kTimerOffsetClr    = 0x01U;   // TIMERCLR
 constexpr uint8_t kTimerOffsetLoad = 0x03U;
+constexpr uint8_t kTimerModeWakeup   = 0x04U;   // WAKEUPTIMER, prescaler bit 3 = 0 (16 ms)
+constexpr uint8_t kTimerOffsetConfig = 0x05U;   // TIMERCONFIG
 constexpr uint8_t kTimerOffsetTarget = 0x08U;
 constexpr uint8_t kShipOffsetShip = 0x02U;
 constexpr uint8_t kShipOffsetHibernate = 0x00U;
@@ -745,6 +748,11 @@ bool npm1300_configure_hibernate_timer_ms(uint32_t delay_ms) {
         (delay_ms + (NPM1300_HIBERNATE_TIMER_PRESCALE_MS - 1UL)) /
         NPM1300_HIBERNATE_TIMER_PRESCALE_MS;
     if (ticks == 0UL || ticks > 0xFFFFFFUL) {
+        return false;
+    }
+
+    if (!npm1300_write_reg(NPM1300_BASE_TIMER, kTimerOffsetClr, 1U) ||           // stop any running mode (e.g. watchdog)
+        !npm1300_write_reg(NPM1300_BASE_TIMER, kTimerOffsetConfig, kTimerModeWakeup)) {
         return false;
     }
 
